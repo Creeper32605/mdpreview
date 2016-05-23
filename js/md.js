@@ -211,7 +211,7 @@
 
 	let parseUnorderedLists = function(code) {
 		var markdown = [];
-		var re = /((^|\n)([^\n\S]*)[*+-]([\s\S]+)(?=(?:\n\n)))+/;
+		var re = /([^\n\S]*[*+-][^\n\S]*.+)([^\n\S]*[*+-]?[^\n\S]*.+(\n|$))+/;
 		var block;
 
 		while((block = code.match(re)) !== null) {
@@ -237,7 +237,7 @@
 				ord += Math.floor(pord / 2);
 				items.push({
 					ord: ord,
-					text: m[3]
+					text: parseMarkdown(m[3])
 				});
 			}
 
@@ -524,7 +524,7 @@
 					html += `<ul>`;
 					let prev
 					for (let i of node.items) {
-						html += `<li>${i.text}</li>`;
+						html += `<li>${mdToHTML(i.text)}</li>`;
 					}
 					html += `</ul>`;
 					break;
