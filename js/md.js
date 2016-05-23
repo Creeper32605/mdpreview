@@ -8,9 +8,9 @@
 		}
 	};
 
-	let parseCodeBlock = function(code, preserveWhitespace) {
+	let parseCodeBlock = function(code) {
 		var markdown = [];
-		var re = preserveWhitespace ? /```(\w*?)\r?\n([\s\S\r\n]+?)```/ : /```(\w*?)\r?\n([\s\S]+?)(?:\r?\n)?```/;
+		var re = /```[^\S\n]*(\w*?)\r?\n([\s\S]+?)(?:\r?\n)?```/;
 		var block;
 
 		while((block = code.match(re)) !== null) {
@@ -209,6 +209,55 @@
 		return markdown;
 	};
 
+	let parseUnorderedLists = function(code) {
+		var markdown = [];
+		var re = /((^|\n)([^\n\S]*)[*+-]([\s\S]+)(?=(?:\n\n)))+/;
+		var block;
+
+		while((block = code.match(re)) !== null) {
+			var before = code.substr(0, block.index);
+			code = code.substr(block.index + block[0].length);
+
+			let items = [];
+			let lines = block[0].split('\n');
+			let lre = /^(\s*)([*+-])?\s*(.+)/;
+			for (let i of lines) {
+				let ord = 0;
+				let pord = 0;
+				let m = i.match(lre);
+				if (!m) continue;
+				if (!m[2] && items[items.length - 1]) {
+					items[items.length - 1].text += '\n' + m[3];
+					continue;
+				}
+				for (let c of m[1]) {
+					if (c == '\t') ord++;
+					if (c == ' ') pord++;
+				}
+				ord += Math.floor(pord / 2);
+				items.push({
+					ord: ord,
+					text: m[3]
+				});
+			}
+
+			markdown.push({
+				type: 'str',
+				str: before
+			}, {
+				type: 'ulist',
+				items: items
+			});
+		}
+
+		markdown.push({
+			type: 'str',
+			str: code
+		});
+
+		return markdown;
+	};
+
 	let parseFormatting = function(code) {
 		var markdown = [];
 		var re = /(^|[\'\";\:\s!\,.\-\[\]\{}\(\)?])((\*\*|__|~~)|[\*_])(.+?)\2(?=$|[\'\";\:\s!\,.\-\[\]\{}\(\)?])/;
@@ -244,6 +293,36 @@
 		return markdown;
 	};
 
+	let parseLinksAndImages = function(code) {
+		var markdown = [];
+		var re = /(!)?\[([^\]\n]*)\]\((\S+)\)/;
+		var block;
+
+		while((block = code.match(re)) !== null) {
+			var before = code.substr(0, block.index);
+			code = code.substr(block.index + block[0].length);
+
+			let type = block[1] == '!' ? 'image' : 'link';
+
+
+			markdown.push({
+				type: 'str',
+				str: before
+			}, {
+				type: type,
+				alt: block[2],
+				url: block[3]
+			});
+		}
+
+		markdown.push({
+			type: 'str',
+			str: code
+		});
+
+		return markdown;
+	};
+
 	let parseURL = function(code) {
 		var markdown = [];
 
@@ -258,7 +337,7 @@
 
 			if (node instanceof HTMLElement) {
 				markdown.push({
-					type: 'link',
+					type: 'link2',
 					str: node.textContent,
 					url: node.href
 				});
@@ -371,6 +450,11 @@
 			return div.textContent;
 		});
 	};
+	let encodeEntities = function(s) {
+		let div = document.createElement('div');
+		div.textContent = s;
+		return div.innerHTML;
+	};
 	// katex.renderToString doesn't want to work properly with error things so this should do
 	let KaTeXNodeToHTML = function(code, display) {
 		if (!katex) return code;
@@ -410,10 +494,10 @@
 						markup = d.innerHTML;
 					}
 					markup = markup.replace(/\n/g, '<br>');
-					html += `<code class="block language-${node.lang}" lang="${node.lang}">${markup}</code>`;
+					html += `<pre><code class="block language-${node.lang}" lang="${node.lang}">${markup}</code></pre>`;
 					break;
 				case 'inlineCode':
-					html += `<code>${node.code}</code>`;
+					html += `<code>${encodeEntities(node.code)}</code>`;
 					break;
 				case 'KaTeX':
 					html += `<div class="md-katex">${KaTeXNodeToHTML(node.code)}</div>`;
@@ -422,7 +506,7 @@
 					html += `<div class="md-katex-display">${KaTeXNodeToHTML(node.code, true)}</div>`;
 					break;
 				case 'header':
-					html += `<h${node.ord}>${node.text}</h${node.ord}>`;
+					html += `<h${node.ord}>${toMarkdown(node.text)}</h${node.ord}>`;
 					break;
 				case 'quote':
 					html += `<blockquote>${mdToHTML(node.text)}</blockquote>`;
@@ -436,9 +520,19 @@
 				case 'strikethrough':
 					html += `<s>${mdToHTML(node.text)}</s>`;
 					break;
-				case 'link':
-					html += `<a href="${node.url}" target="_blank" class="md-hlnk">${node.str}</a>`;
+				case 'ulist':
+					html += `<ul>`;
+					let prev
+					for (let i of node.items) {
+						html += `<li>${i.text}</li>`;
+					}
+					html += `</ul>`;
 					break;
+				case 'link':
+					html += `<a href="${node.url}" title="Open ${node.url}" target="_blank" class="md-hlnk">${node.alt}</a>`;
+					break;
+				case 'image':
+					html += `<img src="${node.url}" alt="${node.alt}" title="${node.alt}">`;
 				case 'color':
 					html += `<span class="md-color" style="background-color: #${node.hex}"></span> #${node.hex}`;
 					break;
@@ -462,13 +556,15 @@
 	var parseMarkdown = function(code) {
 		var markdown = parseCodeBlock(code);
 
+		parseX(markdown, parseUnorderedLists);
+		parseX(markdown, parseHeader);
+		parseX(markdown, parseAltHeader);
 		parseX(markdown, parseInlineCode);
 		parseX(markdown, parseKaTeXDisplay);
 		parseX(markdown, parseKaTeX);
 		parseX(markdown, parseQuote);
-		parseX(markdown, parseHeader);
-		parseX(markdown, parseAltHeader);
 		parseX(markdown, parseFormatting);
+		parseX(markdown, parseLinksAndImages);
 		parseX(markdown, parseURL);
 		parseX(markdown, parseColor);
 		parseX(markdown, parseEmDash);
@@ -479,6 +575,6 @@
 	};
 }
 
-var toMarkdown = function(code, itc) {
-	return mdToHTML(parseMarkdown(code, null, !!itc), !!itc);
+var toMarkdown = function(code) {
+	return mdToHTML(parseMarkdown(code.trim()));
 };
